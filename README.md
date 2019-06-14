@@ -4,6 +4,6 @@ This repository contains code used in the analysis and to produce the manuscript
 
 Explanation
 
-The manuscript was written in R Markdown1 and is contained within the file logbook.Rmd. You may fork this repository and reproduce the entire manuscript on your own computer. Data used is the property of Medberry® www.medberry.com  and is not publically available. is  References are included as a .bib file. 
+The manuscript was written in R Markdown1 and is contained within the file logbook.Rmd. You may fork this repository and reproduce the analysis on your own computer. Data used is the property of Medberry® www.medberry.com  and is not publically available. is  References are included as a .bib file. 
 
 The .html version of the rendered manuscript is included here (logbook.html). To view the rendered manuscript in .html, you may need to download the raw file onto your computer and open it in your browser as GitHub may not display it automatically.
