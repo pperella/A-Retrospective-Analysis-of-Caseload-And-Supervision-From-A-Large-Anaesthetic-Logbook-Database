@@ -1,0 +1,1145 @@
+---
+title: A Retrospective Analysis of Caseload And Supervision From A Large Anaesthetic
+  Logbook Database
+author: Paolo Perella<sup>1</sup>, Edward Palmer<sup>2</sup>, Robert Conway<sup>3</sup>
+  and Danny J. N. Wong<sup>3</sup>
+csl: ../resources/bib/anaesthesia.csl
+output:
+  word_document:
+    reference_docx: ../resources/EP_Anaesthesia.docx
+  pdf_document: default
+  html_document: default
+bibliography: ../resources/bib/medberry.bib
+---
+
+1 Anaesthetic Registrar, Barts Health NHS Trust.   
+2 Anaesthetic Registrar, University College London Hospital. MRC Doctoral Student, Division of Medicine, University College London.  
+3 Consultant Anaesthetist, Northern Devon Healthcare NHS Trust. Managing Director, Medberry Ltd.  
+4 Anaesthetic Registrar, Guy’s and St Thomas’ Hospital NHS Foundation Trust. Research Fellow, National Institute of Academic Anaesthesia Health Services Research Centre, Royal College of Anaesthetists. 
+
+Correspondence to: Dr Paolo Perella Email: pperella@gmail.com
+
+Key Words: Medical Education; Training; Supervision; Continuing Professional Development
+
+```{r medberry_manuscript_setup, include=FALSE, echo=FALSE}
+library(knitr)
+#Load required libraries
+library(tidyverse)
+library(lubridate)
+library(DescTools)
+library(tableone)
+library(pander)
+library(ggridges)
+library(dplyr)
+panderOptions("table.split.table", Inf)
+panderOptions("digits", 1)
+panderOptions("round", 1) 
+panderOptions("keep.trailing.zeros", TRUE)
+knitr::opts_chunk$set(echo = FALSE, dpi = 300)
+
+options(digits = 2)
+ls()
+
+#medberry data
+load("../data/medberry.Rdata")
+
+#remove data this is not needed (region_name is the same as case_region_name)
+medberry <- medberry %>% select(-c(case_region_name, incident_class, privatecase))
+
+#format
+medberry$user_grade <- iconv(medberry$user_grade, "ASCII", "UTF-8", sub="")
+medberry <- medberry %>% mutate(user_grade = toupper(user_grade), casedate = dmy(casedate))
+
+#grades of users
+grades <- read_csv("../data/Grades/grades.csv")
+```
+
+
+```{r formatting, echo=FALSE, include=FALSE}
+#Create a new userIDfield (a number)
+medberry <- mutate(medberry, userID = as.numeric(factor(acl, levels = unique(acl))))
+
+#When adding new data we need to check grades of new data run: 
+#filter(medberry, usergrade_recoded == "Other") %>% select(user_grade) %>% unique() 
+#to See if any need to be added to above grades df
+
+#Recode grades
+medberry <- mutate(medberry, usergrade_recoded = 
+               ifelse(user_grade %in% grades$Consultant, "Consultant",
+                      ifelse(user_grade %in% grades$ST, "Specialist Trainee",
+                             ifelse(user_grade %in% grades$CT, "Core Trainee", "Other"))))
+
+#factorise
+medberry$usergrade_recoded <- factor(medberry$usergrade_recoded, levels = c("Core Trainee","Specialist Trainee","Consultant", "Other"), ordered = T)
+
+##removing testers
+medberry <- medberry %>% 
+  filter(user_grade != "PROGRAMMER" & user_grade != "IKEA" & 
+           user_grade != "TEST" & user_grade != "GUNFIGHT", user_grade != "Twitter",
+         user_grade != "MANAGING PARTNER")
+
+#select dates
+medberry_final <- medberry %>% filter(casedate > "2014-08-01" & casedate < "2018-06-15")
+
+
+```
+
+```{r regional_cleaning, echo=FALSE, include=FALSE}
+options(digits = 1)
+ls()
+#medberry data
+load("../data/medberry.Rdata")
+#remove data this is not needed (region_name is the same as case_region_name)
+medberry <- medberry %>% select(-c(case_region_name, incident_class, privatecase))
+#format
+medberry$user_grade <- iconv(medberry$user_grade, "ASCII", "UTF-8", sub="")
+medberry <- medberry %>% mutate(user_grade = toupper(user_grade), casedate = dmy(casedate))
+#grades of users
+grades <- read_csv("../data/Grades/grades.csv")
+```
+
+
+```{r formatting2, echo=FALSE, include=FALSE}
+#Create a new userIDfield (a number)
+medberry <- mutate(medberry, userID = as.numeric(factor(acl, levels = unique(acl))))
+#When adding new data we need to check grades of new data run: 
+#filter(medberry, usergrade_recoded == "Other") %>% select(user_grade) %>% unique() 
+#to See if any need to be added to above grades df
+#Recode grades
+medberry <- mutate(medberry, usergrade_recoded = 
+               ifelse(user_grade %in% grades$Consultant, "Consultant",
+                      ifelse(user_grade %in% grades$ST, "Specialist Trainee",
+                             ifelse(user_grade %in% grades$CT, "Core Trainee", "Other"))))
+#factorise
+medberry$usergrade_recoded <- factor(medberry$usergrade_recoded, levels = c("Core Trainee","Specialist Trainee","Consultant", "Other"), ordered = T)
+##removing testers
+medberry <- medberry %>% 
+  filter(user_grade != "PROGRAMMER" & user_grade != "IKEA" & 
+           user_grade != "TEST" & user_grade != "GUNFIGHT", user_grade != "Twitter",
+         user_grade != "MANAGING PARTNER")
+#select dates
+medberry_final <- medberry %>% filter(casedate > "2014-08-01" & casedate < "2018-06-15")
+```
+
+```{r regional_cleaning2, echo=FALSE, include=FALSE}
+#sorting out regional data
+#recoding other to NA
+medberry_final <- medberry_final %>% 
+  mutate(location_name = ifelse(grepl("Other", location_name), 
+                                NA, location_name))
+#Jersey part of SC region/England
+medberry_final <- mutate(medberry_final, country_name = 
+                           ifelse(country_name == "Jersey", "England", country_name))
+medberry_final <- mutate(medberry_final, region_name = 
+                           ifelse(region_name =="Jersey", "South Central", region_name))
+#Getting a df of hospitals and regions in each country
+#create a function 
+list_regions <- function(country){
+  medberry_final %>% filter(country_name == country) %>% 
+    group_by(country_name, region_name,location_name) %>% tally() %>% filter(!is.na(location_name)) %>% 
+    arrange(location_name, desc(n)) %>% ungroup() %>% group_by(location_name) %>% slice(1) %>% 
+    filter(!is.na(region_name)) %>% select(-n)
+}
+England_regions <- list_regions(country = "England")
+Wales_regions <- list_regions(country = "Wales")
+NI_regions <- list_regions(country = "Northern Ireland")
+Scotland_regions <- list_regions(country = "Scotland")
+Ireland_regions <- list_regions(country = "Ireland")
+Location_look_up <- do.call("rbind", list(Ireland_regions, England_regions, Wales_regions, NI_regions, Scotland_regions))
+#duplicated location_names annonyingly there are 2 royal ortho so this is not a mistake so slicing below will remove one
+L <- Location_look_up %>% filter(duplicated(location_name)) %>% 
+  select(location_name) %>% pull()
+#parent regions and countries
+region <- Location_look_up %>% group_by(location_name) %>% 
+  select(-country_name) %>% slice(1)
+country <- Location_look_up %>% group_by(region_name) %>% select(-location_name) %>%
+  arrange(country_name) %>% slice(1)
+#selecting locations, regiona and countries in UK & ROI
+uk <- medberry_final %>% filter(country_name %in% c(Location_look_up$country_name, NA)|
+                                  region_name %in% Location_look_up$region_name |
+                                  location_name %in% Location_look_up$location_name)
+#joining parent countrirs
+uk <- uk %>% left_join(country, by = "region_name")
+#if the new country col is na (becauare there was no regional data) select original contry, otherwise the new country.
+uk <- uk %>% mutate(country_name = ifelse(is.na(country_name.y) & !is.na(country_name.x), country_name.x, country_name.y))
+#there are some with na region but with location data I am going to put the location data for these in the region column then rejoin to parent as can't think of a better way to do this all in one step. 
+uk <- uk %>% left_join(region, by = "location_name")
+#if region_name is na and location name isn't then take the new region name otherwsie stick to original this will prevent overwriting locations with duplicate names. 
+uk <- uk %>% 
+  mutate(region_name = ifelse(is.na(region_name.x) & !is.na(location_name), region_name.y, region_name.x))
+uk <- uk %>% select(-region_name.x, -region_name.y,-country_name.x, -country_name.y)
+#userID of uk users
+uk_ids <- uk %>% group_by(userID, country_name, region_name) %>% 
+  filter(!is.na(country_name)) %>% tally() %>% 
+  arrange(desc(n), userID) %>% slice(1) %>% select(-n)
+#danny why make list instead of just using df?
+reg_join <- list()
+reg_join[["reg"]] <- uk_ids %>% ungroup()
+uk <- uk %>%
+  left_join(reg_join[["reg"]],
+            by = c("userID"))
+uk <- uk %>% mutate(country_name = ifelse(is.na(country_name.x), country_name.y, country_name.x))
+uk <- uk %>% mutate(region_name = ifelse(is.na(region_name.x), region_name.y, region_name.x))             
+uk <- uk %>% select(-country_name.x, -country_name.y, -region_name.x, -region_name.y)
+
+#looking at remaining no_country data to see if there are trainees we are missing (ST/CTs):
+uk <- uk %>% mutate(country_name = 
+                      ifelse(is.na(country_name) & 
+                                      usergrade_recoded %in% c("Core Trainee", "Specialist Trainee"), 
+                                    "UK(Not_Specified)", country_name))
+#removing the NA region data not related to UK/Ireland
+uk <- uk %>% filter(country_name %in% Location_look_up$country_name | country_name == "UK(Not_Specified)")
+#grouping regions for output
+
+YH <- c("West Yorkshire", "South Yorkshire", "North and East Yorkshire and Northern Lincolnshire")
+uk <- uk %>% 
+  mutate(region_name = 
+           ifelse(country_name == "Ireland", "Ireland",
+                  ifelse(country_name == "Scotland", "Scotland",
+                         ifelse(country_name == "Northern Ireland", "Northern Ireland",
+                                ifelse(country_name == "Wales", "Wales", region_name)))))
+                                     
+uk <- uk %>% 
+  mutate(region_group = 
+           ifelse(grepl("London ", region_name), "London",
+                  ifelse(region_name %in% YH, "Yorkshire & Humber", 
+                         ifelse(region_name %in% c("East Midlands", "West Midlands"), "Midlands", region_name))))
+
+
+
+uk <- uk %>% mutate(region_group = ifelse(is.na(region_group), "Region Not Specified", region_group))
+
+region_duplication <- uk %>% 
+  select(usergrade_recoded, region_group, userID) %>% 
+  group_by(region_group, userID) %>% tally() %>% arrange(userID, desc(n))
+duplicate_reg <- region_duplication$userID[duplicated(region_duplication$userID)] 
+
+region_duplication <- region_duplication %>% 
+  mutate(dups = ifelse(userID %in% duplicate_reg, T, F),
+         parent = (ifelse(userID %in% duplicate_reg & region_group != "Region Not Specified", region_group, 
+                          ifelse(dups == F, region_group, NA)))) %>% 
+  filter(!is.na(parent) & dups == T) %>% 
+  arrange(userID, desc(n)) %>% 
+  group_by(userID) %>% 
+  slice(1) %>% 
+  select(userID, parent)
+uk <- left_join(uk, region_duplication, by = "userID")
+```
+
+```{r look_ups, echo=FALSE, include=FALSE}
+#load dictonary
+look_ups <- read.csv("../data/mbylkups.csv") 
+
+look_ups <- look_ups %>% select(fieldName, lookupCode, lookupDescription)
+
+# making a list of dictionaries
+
+dictionary <- list()
+# procedure
+dictionary[["procedure"]] <- look_ups %>%
+  filter(fieldName == "procedure") %>%
+  select(lookupCode, lookupDescription)
+
+# teachingwhom
+dictionary[["teachingWhom"]] <- look_ups %>%
+  filter(fieldName == "teachingWhom") %>%
+  select(lookupCode, lookupDescription)
+
+# supervisorcode
+dictionary[["supervisorcode"]] <- look_ups %>%
+  filter(fieldName == "supervisor") %>%
+  select(lookupCode, lookupDescription)
+dictionary$supervisorcode
+
+# timeofday
+dictionary[["timeofdayfixed"]] <- look_ups %>%
+  filter(fieldName == "timeOfDay") %>%
+  select(lookupCode, lookupDescription)
+
+# prioritycode
+dictionary[["prioritycode"]] <- look_ups %>%
+  filter(fieldName == "priority") %>%
+  select(lookupCode, lookupDescription)
+
+#joining back to data
+
+uk <- uk %>%
+  left_join(dictionary[["prioritycode"]], 
+            by = c("prioritycode" = "lookupCode")) %>%
+  rename(prioritycode_name = lookupDescription) %>%
+  
+  left_join(dictionary[["procedure"]], 
+            by = c("procedure1" = "lookupCode")) %>%
+  
+  left_join(dictionary[["procedure"]], 
+            by = c("procedure2" = "lookupCode")) %>%
+  
+  left_join(dictionary[["procedure"]], 
+            by = c("procedure3" = "lookupCode")) %>%
+  rename(name_procedure1 = lookupDescription.x, 
+         name_procedure2 = lookupDescription.y,
+         name_procedure3 = lookupDescription) %>%
+  
+  left_join(dictionary[["teachingWhom"]], 
+            by = c("teachingwhom" = "lookupCode")) %>%
+  rename(teachingwhom_name = lookupDescription) %>%
+  
+  left_join(dictionary[["timeofdayfixed"]], 
+            by = c("timeofdayfixed" = "lookupCode")) %>%
+  rename(timeofdayfixed_name = lookupDescription)
+
+#the procedures are in three seperate colums to sort this out:
+extract_procedure <- function(column1, column2, column3, procedure_name) {
+  output <- data.frame(ifelse(column1 == procedure_name |
+                                column2 == procedure_name |
+                                column3 == procedure_name, TRUE, FALSE))
+  output[, 1][is.na(output[, 1])] <- FALSE
+  colnames(output) <- procedure_name
+  return(output)
+}
+
+for (i in 1:length(dictionary[["procedure"]]$lookupDescription)) {
+  uk <- cbind(uk, 
+              extract_procedure(uk$name_procedure1,
+                                uk$name_procedure2, 
+                                uk$name_procedure3, 
+                                paste0(dictionary[["procedure"]]$lookupDescription[i])))
+}
+
+uk <- uk %>% 
+  mutate(Fiberoptic = ifelse((`Fibreoptic Asleep` == TRUE)|
+                               (`Fibreoptic Awake` == TRUE), TRUE, FALSE))
+
+uk <- uk %>% 
+  mutate(CVC = ifelse((`Central Line Subclavian` == TRUE)|
+                        (`Central Line Tunnelled` == TRUE)|
+                        (`Central Line Axillary` == TRUE)|
+                        (`Central Line Femoral` == TRUE)|
+                        (`Central Line Jugular` == TRUE)|
+                        (`Central Line Other` == TRUE)|
+                        (`Vascath` == TRUE)|
+                        (`Peripherally inserted central access (PICC)` == TRUE), TRUE, FALSE))
+
+uk <- uk %>% mutate(TCI_TIVA = ifelse((TIVA == TRUE)|(TCI == TRUE), TRUE, FALSE))
+
+uk <- uk %>% 
+  mutate(L_Epidural = ifelse(regional_anaesthetic_name == "Epidural Lumbar", TRUE,
+                             ifelse(operation_name == "Epidural for labour", TRUE, FALSE)))
+
+uk <- uk %>%
+  mutate(L_Epidural = if_else(is.na(L_Epidural), FALSE, L_Epidural))
+
+
+uk <- uk %>% mutate(Spinal = if_else(is.na(regional_anaesthetic_name), FALSE,
+                                     ifelse(regional_anaesthetic_name == "Spinal", TRUE, FALSE)))
+# Depreceated SV/IPPV into one for each LMA and ETT
+uk <- uk %>% 
+  mutate(generalanaesthetic = recode(generalanaesthetic,
+                                     `GA ETT IPPV` = "GA ETT",
+                                     `GA ETT SV` = "GA ETT",
+                                     `GA LMA SV` = "GA LMA",
+                                     `GA LMA IPPV` = "GA LMA",
+                                     `None (Monitoring Only)` = "None")) 
+
+uk$generalanaesthetic <- factor(uk$generalanaesthetic)
+
+#Making LMA and Intubation a procedure
+uk <- uk %>% 
+  mutate(Intubation = if_else(is.na(generalanaesthetic), FALSE,
+                              ifelse((generalanaesthetic == "GA ETT"), TRUE, FALSE)))
+
+uk <- uk %>% 
+  mutate(LMA = if_else(is.na(generalanaesthetic), FALSE,
+                       ifelse((generalanaesthetic == "GA LMA"), TRUE, FALSE)))
+
+
+
+#filtering dates()
+uk_grades <- uk %>% filter(usergrade_recoded %in% c("Core Trainee","Specialist Trainee","Consultant"))
+
+uk_grades$usergrade_recoded <- factor(uk_grades$usergrade_recoded, levels = c("Core Trainee","Specialist Trainee","Consultant"), ordered = T)
+
+save(uk_grades, file="uk_grades.Rdata")
+```
+
+```{r Strobe_quarter, echo=FALSE, include=FALSE}
+#here I have broken each users data into quarterly periods, applied exculsion crtieria and then extraoplated each quarter to a yearly figure by *4
+quarterly <- uk_grades %>%
+  group_by(userID) %>% 
+  mutate(year = 
+           plyr::round_any((time_length(difftime(max(casedate), casedate, units = "weeks"),
+	  "weeks")/52.25), accuracy = 0.25)) %>% 
+  ungroup()
+
+table(quarterly$usergrade_recoded)
+
+quarterly <- quarterly %>% ungroup() %>% mutate(user_year = c(paste(userID, year, sep="_")))
+
+quarterly$user_year <- as.factor(quarterly$user_year)
+
+quarterly <- quarterly %>% group_by(user_year) %>% mutate(log_duration = (max(casedate) - min(casedate)))
+
+#trial users (users logging < 7)
+trial_users <- quarterly %>% group_by(user_year) %>% filter(log_duration > 7) %>% ungroup()
+
+# List of those who only logged four months in total
+four_months <- trial_users %>% group_by(user_year) %>% filter(log_duration > 30) %>% ungroup()
+
+#those who are logging blank data - likely using log book for custom data entry 
+custom_logs <- four_months %>% filter(!(is.na(operation_name) & is.na(generalanaesthetic) & is.na(procedure1) & is.na(procedure2) & is.na(procedure3) & is.na(regionalanaestheticcode)))
+
+poor_engagment <- 
+  custom_logs %>% group_by(user_year) %>% summarise(n = n()*4) %>% filter(n < 52) %>% 
+  pull(user_year)
+
+poor_engagers <- custom_logs %>% filter(!(user_year %in% poor_engagment))
+
+#those with big gaps (>30 days between logs)
+
+big_gap <- poor_engagers %>% select(user_year, casedate) %>% arrange(user_year, casedate)
+
+diff <-  abs(diff(big_gap$casedate))
+
+diff <- c(NA, diff)
+big_gap$diff <-  diff
+user_diff <- diff(big_gap$user_year)
+user_diff <- c(NA, user_diff)
+
+big_gap$user_diff <- user_diff 
+
+big_gaps <- big_gap %>% filter(user_diff == 0 & diff > 30) %>%
+  select(user_year) %>% 
+  unique() %>% 
+  pull()
+
+big_gap <- poor_engagers %>% filter(user_year %in% big_gaps)
+
+uk_final <- poor_engagers %>%  filter(!(user_year %in% big_gaps))
+
+quarterly_case_numbers <- uk_final %>% 
+  group_by(user_year, usergrade_recoded, country_name, region_group) %>% 
+  summarise(cases = n()*4) %>% ungroup() %>% group_by(usergrade_recoded, country_name, region_group) %>% 
+  summarise(median = median(cases),
+            lower_quartile = quantile(cases, prob = 0.25),
+            upper_quartile = quantile(cases, prob = 0.75))
+tot <- uk_final %>% group_by(usergrade_recoded, country_name, region_group) %>% count() 
+quarterly_case_numbers$Total <- tot$n
+```
+
+```{r Strobe, include=FALSE, echo=FALSE}
+library(DiagrammeR)
+library(DiagrammeRsvg) #Needed if you want to export the image
+library(rsvg) #Needed if you want to export the image
+
+#Set the values which will go into each label.
+a1 <- paste0('Total available cases\nn = ', 
+             formatC(nrow(medberry_final), big.mark = ","), 
+             '\n',
+             formatC(length(unique(medberry_final$acl)), big.mark = ","), 
+             ' users')
+
+b1 <- ''
+
+c1 <- paste0('UK & ROI cases\nn = ',
+             formatC(nrow(uk), big.mark = ","),
+             '\n',
+             formatC(length(unique(uk$acl)), big.mark = ","),
+             ' users')
+
+d1 <- ''
+
+e1 <- paste0('INCLUDED IN ANALYSIS:\nn = ',
+             formatC(nrow(uk_final), big.mark = ","),
+             '\n',
+             formatC(length(unique(uk_final$userID)), big.mark = ","),
+             ' users\n')
+
+f1 <- paste0('Core Trainees\nn = ',
+             formatC(nrow(filter(uk_final, usergrade_recoded == "Core Trainee")), big.mark = ","),
+             '\n ',
+             formatC(length(unique(filter(uk_final, usergrade_recoded == "Core Trainee")$userID)), big.mark = ","),
+             ' users\n')
+
+a2 <- ''
+
+b2 <- paste0('EXCLUDED FROM ANALYSIS:\n',
+             'Non UK/ROI data: n = ',
+             formatC(nrow(medberry_final) - nrow(uk), big.mark = ","))
+
+c2 <- ''
+
+d2 <- paste0('EXCLUDED FROM ANALYSIS:\n',
+             
+             'Unknown grade: n = ',
+             formatC(nrow(uk) - nrow(uk_grades), big.mark = ","),
+             
+             '\nTrial period users: n = ',
+             formatC(nrow(quarterly) - nrow(trial_users), big.mark = ","),
+             
+             '\nNew users: n = ',
+             formatC(nrow(trial_users) - nrow(four_months), big.mark = ","),
+             
+             '\nNon-anaesthetic cases: n = ',
+             formatC(nrow(four_months) - nrow(custom_logs), big.mark = ","),
+             
+             '\nUsers logging less than 1 case per week: n = ',
+             formatC((nrow(custom_logs) - nrow(poor_engagers)), big.mark = ","),
+             
+             '\nUsers with large data gaps: n = ',
+             formatC(nrow(big_gap), big.mark = ","))
+
+e2 <- ''
+
+f2 <- paste0('Specialist Trainee\nn = ',
+             formatC(nrow(filter(uk_final, (usergrade_recoded %in% c("Specialist Trainee", "Specialist Trainee_IRE")))), big.mark = ","),
+             '\n',
+             formatC(length(unique(filter(uk_final, (usergrade_recoded %in% c("Specialist Trainee", "Specialist Trainee_IRE")))$userID)), big.mark = ","),
+             ' users')
+
+f3 <- paste0('Consultants\nn = ',
+             formatC(nrow(filter(uk_final, usergrade_recoded %in% c("Consultant", "Consultant_IRE" ))), big.mark = ","),
+             '\n',
+             formatC(length(unique(filter(uk_final, usergrade_recoded %in% c("Consultant", "Consultant_IRE"))$userID)), big.mark = ","),
+             ' users')
+
+#Create a node dataframe
+ndf <- create_node_df(
+  n = 13,
+  label = c(a1, b1, c1, d1, e1, f1,
+            a2, b2, c2, d2, e2, f2,
+            f3),
+  
+  style = c('solid', 'invis', 'solid', 'invis', 'solid', 'solid',
+            'invis', 'solid', 'invis', 'solid', 'invis', 'solid',
+            'solid'),
+  
+  shape = c('box', 'point', 'box', 'point', 'box', 'box',
+            'point', 'box', 'point', 'box', 'point', 'box',
+            'box'),
+  
+  width = c(2.5, 0.001, 2.5, 0.001, 2.5, 3,
+            0.001, 3.5, 0.001, 5, 0.001, 3,
+            3),
+  
+  height = c(1, 0.001, 1, 0.001, 1, 1,
+             0.001, 1, 0.001, 1.8, 0.001, 1,
+             1),
+  
+  fontsize = c(rep(14, 13)),
+  fontname = c(rep('Helvetica', 13)),
+  penwidth = 1.5,
+  fixedsize = 'true')
+
+#Create an edge dataframe
+edf <- create_edge_df(
+  from = c(1, 2, 3, 4, 5,
+           7, 8, 9,
+           2, 4,
+           5, 5),
+  
+  to = c(2, 3, 4, 5, 6,
+         8, 9, 10,
+         8, 10,
+         12, 13),
+  
+  arrowhead = c('none', 'normal', 'none', 'normal', 'normal',
+                'none', 'none', 'none',
+                'normal', 'normal',
+                'normal', 'normal'),
+  
+  color = c('black', 'black', 'black', 'black', 'black',
+            '#00000000', '#00000000', '#00000000',
+            'black', 'black',
+            'black', 'black'),
+  
+  constraint = c(rep('true', 8),
+                 rep('false', 2),
+                 rep('true', 2))
+)
+
+g_quarterly <- create_graph(ndf,
+                            edf,
+                            attr_theme = NULL)
+
+#Not run: but to run this in R Studio, uncomment below
+render_graph(g_quarterly)
+
+export_graph(g_quarterly, file_name = "../outputs/figures/fig1.pdf", width = 2000, height = 2000)
+```
+
+```{r country_data, include=FALSE, echo=FALSE}
+### COUNTRY DATA ###
+#RCOA workforce data
+rcoa_workforce <- data_frame(
+  country_name = c("England","Northern Ireland","Scotland","Wales", "Ireland", "UK(Not_Specified)"), 
+  Total_Consultants = c(6019, 240, 758, 405, 379 ,NA))
+
+Cons_numbers_UK <- 7439
+Cons_numbers_IRE <- 379
+
+#HEE & NI/Scot/Wales data on trainee numbers
+HEE_mod <-  read.csv("../data/HEE_mod.csv")
+names(HEE_mod) <- c("region_group", "Total_Trainees")
+
+#number of users in each country
+country_users <- uk_final %>% 
+  group_by(country_name,  userID) %>% tally() %>%
+  summarise(Total_users = table(country_name))
+
+country_users_trainnee <- uk_final %>% 
+  filter(!(usergrade_recoded %in% c("Consultant", "Consultant_IRE", "Other"))) %>% 
+  group_by(country_name,  userID) %>% tally() %>%
+  summarise(Trainees = table(country_name)) %>% left_join(HEE_mod, by = c("country_name" = "region_group"))
+
+country_users_consultants <- uk_final %>% 
+  filter(usergrade_recoded %in% c("Consultant", "Consultant_IRE")) %>% 
+  group_by(country_name, userID) %>% tally() %>% 
+  summarise(Consultants = table(country_name))
+
+country_users_cbind <- left_join(country_users, country_users_trainnee)
+
+country_users_cbind <- full_join(country_users_cbind, country_users_consultants)
+
+country_users_cbind <- left_join(rcoa_workforce, country_users_cbind)
+
+#summary table, mean, median IQR, users and case numbers. 
+
+country_table <- uk_final %>% 
+  group_by(user_year, country_name) %>% 
+  summarise(cases = n()*4) %>% ungroup() %>% 
+  group_by(country_name) %>% 
+  summarise(median = median(cases),
+            lower_quartile = quantile(cases, prob = 0.25),
+            upper_quartile = quantile(cases, prob = 0.75)) 
+
+country_summary <- country_table %>% 
+  left_join(country_users_cbind, by = "country_name")
+
+### REGIONAL DATA ###
+
+#number of users in each region
+region_users <- uk_final %>% 
+  group_by(region_group, userID) %>% 
+  tally() %>% 
+  summarise(Total_users = table(region_group))
+
+region_users_trainnees <- uk_final %>% 
+  filter(usergrade_recoded %in% c("Core Trainee", "Specialist Trainee")) %>%  
+  group_by(region_group, userID) %>% tally() %>% 
+  summarise(Trainees = table(region_group)) %>% left_join(HEE_mod)
+
+region_users_consultants <- uk_final %>% 
+  filter(usergrade_recoded %in% c("Consultant")) %>% 
+  group_by(region_group, userID) %>% tally() %>% 
+  summarise(Consultants = table(region_group)) 
+
+region_users_cbind <- left_join(region_users_trainnees, region_users)
+
+region_users_cbind <- left_join(region_users_cbind, region_users_consultants)
+
+#summary table, mena, median IQR, users and case numbers. 
+regional_table <- uk_final %>% 
+  group_by(region_group, user_year) %>% 
+  summarise(cases = n()*4) %>% ungroup() %>% 
+  group_by(region_group) %>% 
+  summarise(median = median(cases),
+            lower_quartile = quantile(cases, prob = 0.25),
+            upper_quartile = quantile(cases, prob = 0.75))
+
+regional_summary <- regional_table %>% 
+  left_join(region_users_cbind, by = "region_group")
+
+regional_summary$Total_Consultants <- NA
+
+#England sub regions
+regions_england <- regional_table %>% 
+  filter(region_group != "Scotland" & 
+           region_group != "Wales" & 
+           region_group != "Northern Ireland" &
+         region_group != "Ireland")
+
+#Table 3 Combined country and regional data
+
+country_regions_summary <- 
+  rbind(rename(country_summary, region_group = country_name), 
+                 filter(regional_summary, !(region_group %in% c("Scotland", "Wales", "Northern Ireland", "Ireland", "UK(Not_Specified)"))))
+
+#country_regions_summary <- right_join(HEE_mod, country_regions_summary, by = "region_group") %>% rename()
+
+country_regions_summary <- country_regions_summary %>% 
+  mutate(percent_trainees = 100*(Trainees/Total_Trainees),
+         percent_consultants = 100*(Consultants/Total_Consultants))
+
+country_regions_summary <- country_regions_summary[c("region_group","Total_users", "Consultants", "percent_consultants", "Trainees", "percent_trainees", "median", "lower_quartile" , "upper_quartile")]
+
+country_regions_summary2 <- filter(country_regions_summary, region_group != "UK(Not_Specified)")
+```
+
+```{r labels, include=FALSE, echo=FALSE}
+
+#devtools::install_github("benjaminrich/table1")
+library(table1)
+
+# Patient Demographics
+
+uk_final$gendercode <- 
+  factor(uk_final$gendercode, 
+         levels = c("M","F"),
+         labels = c("Male", "Female"))
+label(uk_final$gendercode) <- "Gender"
+
+uk_final$supervisorcode <- 
+  factor(uk_final$supervisorcode, 
+         levels = c("Con", "NonCon","Trn", "N"),
+         labels = 
+           c("Consultant", "Non Consultant Grade", "Trainee", "None"))
+label(uk_final$supervisorcode) <- "Supervision"
+
+uk_final$age_group <- 
+  factor(uk_final$age_group, 
+         levels = c("<1 month", "<1 year", "1-5 years", "6-15 years", "16-80 years", ">80 years"),
+         labels=c("<1 month", "<1 year", "1-5 years", "6-15 years", "16-80 years", ">80 years"))
+label(uk_final$age_group) <- "Age Group"
+
+uk_final$asa <- 
+  factor(uk_final$asa, levels = c("1","2","3","4","5"), 
+         labels = c("I","II","III","IV","V"))
+label(uk_final$asa) <- "ASA"
+
+# Operative Type & Urgency
+
+label(uk_final$speciality_name) <- "Speciality"
+
+
+uk_final$dayname <- 
+  factor(uk_final$dayname, 
+         levels = c("MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"), 
+         labels = c("MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"))
+label(uk_final$daytype) <- "Day of the week"
+
+uk_final$daytype <- 
+  factor(uk_final$daytype, 
+         levels = c("wkday", "wkend"), 
+         labels = c("Weekday", "Weekend"))
+label(uk_final$daytype) <- "Weekend"
+
+uk_final$prioritycode <- 
+  factor(uk_final$prioritycode, 
+         levels = c("RT","DY","UR","EM\003"), 
+         labels = c("Routine","Day Case","Urgent","Emergency"))
+label(uk_final$prioritycode) <- "Urgency"
+
+uk_final$timeofdayfixed <- 
+  factor(uk_final$timeofdayfixed, 
+         levels = c("D", "E", "N"), 
+         labels = c("Day", "Evening", "Night"))
+label(uk_final$timeofdayfixed) <- "Time of Surgery"
+
+label(uk_final$regional_anaesthetic_name) <- "Regional"
+```
+
+```{r cases_per_year, include=FALSE, echo=FALSE}
+#cases per year on all users
+            
+quarterly_case_numbers_trainee_cbind <- uk_final %>%
+  group_by(user_year, usergrade_recoded) %>% 
+  summarise(cases = n()*4) %>% ungroup() %>% group_by(usergrade_recoded) %>% 
+  summarise(median = median(cases),
+            lower_quartile = quantile(cases, prob = 0.25),
+            upper_quartile = quantile(cases, prob = 0.75))
+```
+
+
+
+```{r supervision, include=FALSE, echo=FALSE}
+### SUPERVISION ###
+uk_final <- uk_final %>% mutate(supervised = ifelse(supervisorcode == "None", F, T))
+
+uk_final <- uk_final %>% mutate(dir_cons_supervised = ifelse(supervisorcode == "Consultant" & supervisioncode == "D", T, F))
+
+supervision <- uk_final %>% filter(usergrade_recoded == "Core Trainee" | usergrade_recoded =="Specialist Trainee")  %>% group_by(usergrade_recoded, supervisorcode, timeofdayfixed) %>% tally()
+
+supervision$supervisorcode <-
+  factor(supervision$supervisorcode, 
+         levels = c("Consultant", "Non Consultant Grade","Trainee", "None"), ordered = T)
+
+supervision_ST <- supervision %>% filter(usergrade_recoded == "Specialist Trainee")
+
+supervision_ST <- plyr::ddply(supervision_ST, "timeofdayfixed", transform, percent_supervised = n/sum(n)*100)
+supervision_ST <- arrange(supervision_ST, supervisorcode, timeofdayfixed)
+supervision_ST <- plyr::ddply(supervision_ST, "timeofdayfixed", transform, label_y=cumsum(percent_supervised))
+supervision_ST <- supervision_ST %>%  mutate(supervised = ifelse(supervisorcode == "None", F, T))
+
+supervision_CT <- supervision %>% filter(usergrade_recoded == "Core Trainee")
+supervision_CT <- plyr::ddply(supervision_CT, "timeofdayfixed", transform, percent_supervised = n/sum(n)*100)
+supervision_CT <- arrange(supervision_CT, supervisorcode, timeofdayfixed)
+supervision_CT <- plyr::ddply(supervision_CT, "timeofdayfixed", transform, label_y=cumsum(percent_supervised))
+supervision_CT <- supervision_CT %>%  mutate(supervised = ifelse(supervisorcode == "None", F, T))
+
+supervised_total <- rbind(supervision_CT, supervision_ST)
+
+supervised_total <- supervised_total %>% group_by(usergrade_recoded, timeofdayfixed) %>% mutate(test = 100 + (0.5*percent_supervised)-cumsum(percent_supervised))
+
+#made new column as rounding current data throws off graph slightly
+supervised_total$percent_label <- round(supervised_total$percent_supervised, digits = 2)
+
+#Overall direct consultant supervision
+dir_cons_super <- uk_final %>% filter(usergrade_recoded == "Core Trainee" | usergrade_recoded =="Specialist Trainee") %>%   
+  group_by(usergrade_recoded, dir_cons_supervised) %>%
+    count() %>%
+    ungroup() %>% 
+    mutate(percent = round(n/sum(n)*100, digits =2),
+           y_label = 100 + (0.5*percent)-cumsum(percent))
+
+```
+
+```{r supervision_region, include=FALSE, echo=FALSE}
+supervision__region <- uk_final %>% filter(usergrade_recoded == "Core Trainee" | usergrade_recoded =="Specialist Trainee") %>% 
+  group_by(dir_cons_supervised, region_group) %>% summarise(n=n())
+
+supervision__region <- plyr::ddply(supervision__region, "region_group", transform, percent_supervised = n/sum(n)*100)
+supervision__region <- arrange(supervision__region, region_group, dir_cons_supervised)
+supervision__region <- plyr::ddply(supervision__region, "region_group", transform, label_y=cumsum(percent_supervised))
+supervision__region <- supervision__region %>% filter(dir_cons_supervised == T)
+
+ggplot(supervision__region, aes(reorder(region_group, percent_supervised, FUN = max),  y= percent_supervised)) + 
+  geom_bar(stat = "identity") + scale_y_continuous(limits = c(0,60), breaks = c(5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60))
+```
+
+```{r supervision__2, echo=FALSE, fig.cap= "caption"}
+#to get percentages of trainees recieving direct consultant supervision:
+                                                    
+supervision__2 <- uk_final %>% filter(usergrade_recoded == "Core Trainee" | usergrade_recoded =="Specialist Trainee") %>% 
+  group_by(usergrade_recoded, timeofdayfixed, dir_cons_supervised) %>%  
+  summarise(n = n())
+
+supervision_ST__2 <- supervision__2 %>% filter(usergrade_recoded == "Specialist Trainee")
+
+supervision_ST__2 <- plyr::ddply(supervision_ST__2, "timeofdayfixed", transform, percent_supervised = n/sum(n)*100)
+supervision_ST__2 <- arrange(supervision_ST__2, timeofdayfixed, dir_cons_supervised)
+supervision_ST__2 <- plyr::ddply(supervision_ST__2, "timeofdayfixed", transform, label_y=cumsum(percent_supervised))
+
+supervision_CT__2 <- supervision__2 %>% filter(usergrade_recoded == "Core Trainee")
+
+supervision_CT__2 <- plyr::ddply(supervision_CT__2, "timeofdayfixed", transform, percent_supervised = n/sum(n)*100)
+supervision_CT__2 <- arrange(supervision_CT__2, timeofdayfixed, dir_cons_supervised)
+supervision_CT__2 <- plyr::ddply(supervision_CT__2, "timeofdayfixed", transform, label_y=cumsum(percent_supervised))
+
+
+supervised_total_2 <- rbind(supervision_CT__2, supervision_ST__2)
+
+supervised_total_2 <- supervised_total_2 %>% group_by(usergrade_recoded, timeofdayfixed) %>% 
+  mutate(test = 100 + (0.5*percent_supervised)-cumsum(percent_supervised))
+supervised_total_2$percent_label <- round(supervised_total_2$percent_supervised, digits = 2)
+
+```
+
+```{r procedures, include=FALSE, echo=FALSE}
+#to get number of years user has been logging:
+
+procedures1 <- uk_final %>% group_by(userID) %>% mutate(log_duration = max(casedate) - min(casedate),
+                                                        years = as.numeric(log_duration/365)) 
+procedures1$years <- round(procedures1$years, digits = 0.5)
+
+#list of number of years loggin and user ID to rejoin to procedures
+id_year <- procedures1 %>% select(userID, years) %>% group_by(userID) %>% slice(1)
+
+#sum of procedures by userID and grade
+procedures2 <-  procedures1 %>% group_by(userID, usergrade_recoded) %>% summarise_at(.vars = vars(Arterial:LMA), .funs = funs(sum(.)))
+
+#join the log duration
+procedures3 <- left_join(procedures2, id_year, by = "userID")
+
+#divide the number of procedures done by the number of years they have been loggin to get procedures per year
+procedures4 <- procedures3 %>% group_by(userID) %>% mutate_at(.vars = vars(Arterial:LMA), .funs = funs((.)/years))
+
+#summarise by grade (see CreateTableOne)
+procedure5 <- procedures4 %>% group_by(usergrade_recoded) %>% summarise_at(.vars = vars(Arterial:LMA), .funs = funs(median(.)))
+```
+
+<!-- Ed: suggestion. If you want to use Rmarkdown and write inline code (which is great by the way) then can I suggest that you do all the wrangling for the number you want in a code chunk and then assign that number to an object like : core_cases <- wrangling %>% goes %>% here. That way you can inline use r core_cases and your text is much more readable. Similarly, consider using better bibtex to shorten your citekeys. Rmd is fantastic, but can quickly become too hard to read when its "codified" -->
+
+```{r script_code, echo = F, include=FALSE, warning=FALSE}
+CT_Median <- filter(quarterly_case_numbers_trainee_cbind, usergrade_recoded == "Core Trainee") %>% select(median) %>% pull() 
+CT_0.25 <- filter(quarterly_case_numbers_trainee_cbind, usergrade_recoded == "Core Trainee") %>% select(lower_quartile) %>% pull()
+CT_0.75 <- filter(quarterly_case_numbers_trainee_cbind, usergrade_recoded == "Core Trainee") %>% select(upper_quartile) %>% pull()
+
+ST_Median <- filter(quarterly_case_numbers_trainee_cbind, usergrade_recoded == "Specialist Trainee") %>% select(median) %>% pull()
+ST_0.25 <- filter(quarterly_case_numbers_trainee_cbind, usergrade_recoded == "Specialist Trainee") %>% select(lower_quartile) %>% pull()
+ST_0.75 <- filter(quarterly_case_numbers_trainee_cbind, usergrade_recoded == "Specialist Trainee") %>% select(upper_quartile) %>% pull()
+
+cons_Median <- filter(quarterly_case_numbers_trainee_cbind, usergrade_recoded == "Consultant") %>% select(median) %>% pull()
+cons_0.25 <- filter(quarterly_case_numbers_trainee_cbind, usergrade_recoded == "Consultant") %>% select(lower_quartile) %>% pull()
+cons_0.75 <- filter(quarterly_case_numbers_trainee_cbind, usergrade_recoded == "Consultant") %>% select(upper_quartile) %>% pull()
+
+cons_sup_CT <- filter(dir_cons_super, usergrade_recoded == "Core Trainee" & dir_cons_supervised == TRUE) %>% select(percent) %>% pull()
+cons_sup_ST <- filter(dir_cons_super, usergrade_recoded == "Specialist Trainee" & dir_cons_supervised == TRUE) %>% select(percent) %>% pull()
+```
+
+## Summary
+
+## Introduction
+
+## Methods
+
+## Results 
+
+```{r script_code2, echo=FALSE, include=FALSE, warning=FALSE}
+total_anaesthetists <- length(unique((uk_final$userID)))
+
+CT_numbers <- length(unique(filter(uk_final, (usergrade_recoded %in% c("Core Trainee")))$userID))
+CT_percent <- CT_numbers/total_anaesthetists*100
+
+ST_numbers <- length(unique(filter(uk_final, (usergrade_recoded %in% c("Specialist Trainee")))$userID))
+ST_percent <- ST_numbers/total_anaesthetists*100
+
+cons_numbers <- length(unique(filter(uk_final, (usergrade_recoded %in% c("Consultant")))$userID))
+cons_uk <- country_users %>% filter(country_name != "Ireland") %>% select(Total_users) %>% sum()
+cons_ireland <- country_users %>% filter(country_name == "Ireland") %>% select(Total_users) %>% pull()
+cons_percent <- cons_numbers/total_anaesthetists*100
+
+eng <- length(unique(filter(uk_final, (country_name == "England"))$userID))
+eng_percent <- eng/total_anaesthetists*100
+
+scot <- length(unique(filter(uk_final, (country_name == "Scotland"))$userID))
+scot_percent <- scot/total_anaesthetists*100
+
+ni <- length(unique(filter(uk_final, (country_name == "Northern Ireland"))$userID))
+ni_percent <- ni/total_anaesthetists*100
+
+wales <- length(unique(filter(uk_final, (country_name == "Wales"))$userID))
+wales_percent <- wales/total_anaesthetists*100
+
+ire <- length(unique(filter(uk_final, (country_name == "Ireland"))$userID))
+ire_percent <- ire/total_anaesthetists*100
+```
+
+```{r numbers, include=FALSE, echo=FALSE, warning=FALSE}
+uk_trainee_num <- filter(HEE_mod, region_group != "England")
+uk_trainee_num <- sum(uk_trainee_num$Total_Trainees)
+eng_trainee <- filter(HEE_mod, region_group == "England") %>% select(Total_Trainees) %>% pull()
+scot_trainee <- filter(HEE_mod, region_group == "Scotland") %>% select(Total_Trainees) %>% pull()
+wales_trainee <- filter(HEE_mod, region_group == "Wales") %>% select(Total_Trainees) %>% pull()
+ni_trainee <- filter(HEE_mod, region_group == "Northern Ireland") %>% select(Total_Trainees) %>% pull()
+ire_trainee <- filter(HEE_mod, region_group == "Ireland") %>% select(Total_Trainees) %>% pull()
+percent_eng_traines <- filter(uk_final, (country_name == "England" & usergrade_recoded %in% c("Specialist Trainee", "Core Trainee")))$userID %>% unique() %>% length()/eng_trainee*100
+
+percent_wales_traines <- filter(uk_final, (country_name == "Wales" & usergrade_recoded %in% c("Specialist Trainee", "Core Trainee")))$userID %>% unique() %>% length()/wales_trainee*100
+
+percent_scot_traines <- filter(uk_final, (country_name == "Scotland" & usergrade_recoded %in% c("Specialist Trainee", "Core Trainee")))$userID %>% unique() %>% length()/scot_trainee*100
+
+percent_ni_traines <- filter(uk_final, (country_name == "Northern Ireland" & usergrade_recoded %in% c("Specialist Trainee", "Core Trainee")))$userID %>% unique() %>% length()/ni_trainee*100
+
+percent_ire_traines <- filter(uk_final, (country_name == "Ireland" & usergrade_recoded %in% c("Specialist Trainee", "Core Trainee")))$userID %>% unique() %>% length()/ire_trainee*100
+
+```
+
+
+```{r script_code3, echo=FALSE, warning=FALSE, include=FALSE}
+
+wales_med <- country_table %>% filter(country_name == "Wales") %>% select(median) %>% pull()
+wales_0.25 <- country_table %>% filter(country_name == "Wales") %>% select(lower_quartile) %>% pull()
+wales_0.75 <- country_table %>% filter(country_name == "Wales") %>% select(upper_quartile) %>% pull()
+
+scot_med <- country_table %>% filter(country_name == "Scotland") %>% select(median) %>% pull()
+scot_0.25 <- country_table %>% filter(country_name == "Scotland") %>% select(lower_quartile) %>% pull()
+scot_0.75 <- country_table %>% filter(country_name == "Scotland") %>% select(upper_quartile) %>% pull()
+
+ire_med <- country_table %>% filter(country_name == "Ireland") %>% select(median) %>% pull()
+ire_0.25 <- country_table %>% filter(country_name == "Ireland") %>% select(lower_quartile) %>% pull()
+ire_0.75 <- country_table %>% filter(country_name == "Ireland") %>% select(upper_quartile) %>% pull()
+
+eng_med <- country_table %>% filter(country_name == "England") %>% select(median) %>% pull()
+eng_0.25 <- country_table %>% filter(country_name == "England") %>% select(lower_quartile) %>% pull()
+eng_0.75 <- country_table %>% filter(country_name == "England") %>% select(upper_quartile) %>% pull()
+
+ni_med <- country_table %>% filter(country_name == "Northern Ireland") %>% select(median) %>% pull()
+ni_0.25 <- country_table %>% filter(country_name == "Northern Ireland") %>% select(lower_quartile) %>% pull()
+ni_0.75 <- country_table %>% filter(country_name == "Northern Ireland") %>% select(upper_quartile) %>% pull()
+
+```
+
+```{r script_code5, echo=FALSE, include=FALSE}
+ST_med_epidural <- procedure5 %>% filter(usergrade_recoded == "Specialist Trainee") %>% pull(L_Epidural)
+ST_0.25_epidural <- procedures4 %>% filter(usergrade_recoded == "Specialist Trainee") %>% pull(L_Epidural) %>% quantile(.,prob = 0.25)
+ST_0.75_epidural <- procedures4 %>% filter(usergrade_recoded == "Specialist Trainee") %>% pull(L_Epidural) %>% quantile(.,prob = 0.75)
+ST_max_epidural <- procedures4 %>% filter(usergrade_recoded == "Specialist Trainee") %>% pull(L_Epidural) %>% max()
+
+CT_med_tube <- procedures4 %>% filter(usergrade_recoded == "Core Trainee") %>% pull(Intubation) %>% median()
+CT_0.25_tube <- procedures4 %>% filter(usergrade_recoded == "Core Trainee") %>% pull(Intubation) %>% quantile(.,prob = 0.25)
+CT_0.75_tube <- procedures4 %>% filter(usergrade_recoded == "Core Trainee") %>% pull(Intubation) %>% quantile(.,prob = 0.75)
+CT_max_epidural <- procedures4 %>% filter(usergrade_recoded == "Core Trainee") %>% pull(L_Epidural) %>% max()
+
+ST_med_tube <- procedures4 %>% filter(usergrade_recoded == "Specialist Trainee") %>% pull(Intubation) %>% median()
+ST_0.25_tube <- procedures4 %>% filter(usergrade_recoded == "Specialist Trainee") %>% pull(Intubation) %>% quantile(.,prob = 0.25)
+ST_0.75_tube <- procedures4 %>% filter(usergrade_recoded == "Specialist Trainee") %>% pull(Intubation) %>% quantile(.,prob = 0.75)
+ST_max_epidural <- procedures4 %>% filter(usergrade_recoded == "Specialist Trainee") %>% pull(L_Epidural) %>% max()
+
+```
+
+```{r script_code4, echo=FALSE, include=FALSE}
+cbind_trainee_Median <- filter(uk_final, usergrade_recoded %in% c("Core Trainee", "Specialist Trainee")) %>% group_by(user_year) %>% summarise(cases = n()*4) %>% ungroup()  %>% 
+summarise(median = median(cases))
+
+cbind_trainee_0.25 <- filter(uk_final, usergrade_recoded %in% c("Core Trainee", "Specialist Trainee")) %>% group_by(user_year) %>% summarise(cases = n()*4) %>% ungroup()  %>% 
+summarise(lower_quartile = quantile(cases, prob = 0.25))
+
+cbind_trainee_0.75 <- filter(uk_final, usergrade_recoded %in% c("Core Trainee", "Specialist Trainee")) %>% group_by(user_year) %>% summarise(cases = n()*4) %>% ungroup()  %>% 
+summarise(upper_quartile = quantile(cases, prob = 0.75))
+
+T_0.25 <- filter(quarterly_case_numbers_trainee_cbind, usergrade_recoded == "Specialist Trainee") %>% select(lower_quartile) %>% pull()
+ST_0.75 <- filter(quarterly_case_numbers_trainee_cbind, usergrade_recoded == "Specialist Trainee") %>% select(upper_quartile) %>% pull()
+```
+
+## Acknowledgements
+
+## Tables
+
+### Table 1
+
+<!-- Demographics of all the users -->
+```{r table_1, echo=FALSE, message=FALSE, warning=FALSE}
+table1a <- CreateTableOne(data = uk_final, vars = c("age_group", "gendercode", "asa", "speciality_name", "daytype", "supervisorcode", "prioritycode", "timeofdayfixed", "generalanaesthetic"), strata = "usergrade_recoded") %>% print(nonnormal = c("age_group", "gendercode", "asa", "speciality_name", "daytype", "supervisorcode", "prioritycode", "timeofdayfixed", "generalanaesthetic"), test = F, printToggle = F) 
+table1b <- CreateTableOne(data = uk_final, vars = c("age_group", "gendercode", "asa", "speciality_name", "daytype", "supervisorcode", "prioritycode", "timeofdayfixed", "generalanaesthetic")) %>% print(nonnormal = c("age_group", "gendercode", "asa", "speciality_name", "daytype", "supervisorcode", "prioritycode", "timeofdayfixed", "generalanaesthetic"), test = F, printToggle = F)
+cbind(table1a, table1b) %>% pander(caption = "Table 1 Characteristics of anaesthetic cases stratified by grade of anaesthetist. Percentages refer to a particular anaesthetic grade. ASA = American Society of Anesthesiologists Physical Status, GA-ETT = general anaesthesia with endotracheal tube, GA-LMA = general anaesthesia with supraglotic airway device, GA Mask = general anaesthesia with face mask only
+ ")
+```
+
+### Table 2
+
+```{r table_2, fig.cap = "Table 2: Number of procedures performed per year. N.B. CVC includes; PiCC/Vascath/femoral and Jugular cannulation", echo=FALSE, message=FALSE, warning=FALSE}
+
+CreateTableOne(data = procedures4, 
+               vars = c("Intubation", "LMA", "RSI", "Arterial", "CVC", "Spinal", "L_Epidural"), 
+               strata = "usergrade_recoded") %>% 
+  print(nonnormal = c("Intubation", "LMA", "RSI", "Arterial", "CVC", "Spinal", "L_Epidural"), test = F, printToggle = F) %>% 
+pander(caption = "Table 2 Number of commonly performed procedures undertaken per year, stratified by grade. Presented as median [lower quartile, upper quartile]. Spinal = subarachnoid needle insertion")
+
+#n = quarterlys think we can remove this - will remove in final 
+
+```
+
+### Table 3
+
+```{r table_3, fig.cap= "Table 3: Regional Sub-analysis Data", echo=FALSE, message=FALSE, warning=FALSE}
+panderOptions("digits", 2)
+pander(country_regions_summary, caption = "Table 3 Regional sub-analysis")
+```
+
+## FIGURES
+
+### Figure 1
+
+### User Flow Diagram
+
+<!-- STROBE -->
+       
+![Figure 1: User flow diagram with number of excluded cases detailed.](../outputs/figures/STROBE.png)
+**Figure 1** Data flow diagram illustrating total number of cases extracted from the Medberry database, reasons for exclusions and numbers of cases and users included for analysis. UK = United Kingdom; ROI = Republic of Ireland. n = number of anaesthetic cases.
+
+### Fig 2
+```{r grade_analysis_2, fig.cap = "Figure 2 Notched boxplots of cases per year by Grade. Dark black lines represent medians; Upper bound of boxes represent the 3rd quartile; Lower bound of boxes represent the 1st quartile; Upper bound of the whiskers represent 3rd quartile plus 1.5 times the interquartile range (IQR); Lower bound of the whiskers represent 1st quartile minus 1.5 times the IQR; Notches represent a confidence interval around the median, and non-overlapping notches suggest medians are significantly different. [@mcgill_variations_1978]", echo=FALSE, message=FALSE, warning=FALSE}
+fig2 <- uk_final %>% group_by(user_year, usergrade_recoded) %>% summarise(cases = n()*4) %>% ungroup() %>% group_by(usergrade_recoded) %>% 
+  ggplot(aes(x = reorder(usergrade_recoded, -cases, FUN = median), y = cases)) +
+  geom_boxplot(outlier.alpha = 0, notch = T) + 
+  theme(axis.text.x = element_text(hjust = 2), 
+        axis.title.x = element_blank()) + 
+  scale_y_continuous(breaks = c(0,200,400,600,800, 1000)) + coord_cartesian(ylim = c(0, 1000)) +
+  theme_minimal() + labs(y= "Cases per year", x = element_blank()) +  geom_hline(linetype = 2, yintercept = (uk_final %>% 
+                                               group_by(user_year, usergrade_recoded) %>% 
+                                               summarise(cases = n()*4) %>% ungroup() %>%
+                                               summarise(median = median(cases)) %>% pull()))
+ggsave(fig2, filename = "fig2.pdf", device = cairo_pdf,
+       width = 5, height = 8, units = "in")
+
+fig2
+```
+
+
+### Fig 3
+```{r country_analysis, fig.cap = "Figure 3 Notched boxplots of cases by country (in cases per year). Notched boxplots are further explained in Figure 2. - - - (dashed line) = global median", echo=FALSE, message=FALSE, warning=FALSE}
+
+fig3 <- uk_final %>% filter(country_name != "UK(Not_Specified)") %>% group_by(user_year, country_name) %>% summarise(cases = n()*4) %>% ungroup() %>% group_by(country_name) %>% 
+ggplot(aes(reorder(country_name, cases, FUN = median), y = cases)) +
+  geom_boxplot(outlier.alpha = 0, notch = T) + coord_cartesian(ylim = c(0, 1000)) + scale_y_continuous(breaks = c(0,200,400,600,800,1000)) +
+  theme_minimal() + 
+  geom_hline(linetype = 2, 
+             yintercept = 
+               (uk_final %>% filter(country_name != "UK(Not_Specified)") %>% 
+                  group_by(user_year, country_name) %>% 
+                  summarise(cases = n()*4) %>% ungroup() %>% 
+                  summarise(median = median(cases)) %>% pull())) +
+  labs(y= "Cases per year", x = element_blank())
+
+ggsave(fig3, filename = "fig3.pdf", device = cairo_pdf,
+       width = 8, height = 5, units = "in")
+fig3
+```
+
+### Fig 4
+```{r regional_analysis, fig.cap = "Figure 4. Notched boxplot of cases by region (in cases per year). Notched boxplots are further explained in Figure 2. - - - (dashed line) = global median", warning=FALSE, echo=FALSE}
+
+fig4 <- uk_final %>% filter(region_group != "Region Not Specified") %>% 
+  group_by(user_year, region_group) %>% summarise(cases = n()*4) %>% ungroup() %>% 
+  group_by(region_group) %>% ggplot(., aes(reorder(region_group, cases, FUN = median), y = cases)) +
+  geom_boxplot(outlier.alpha = 0, notch = T) + theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), 
+        axis.title.x = element_blank()) + 
+  scale_y_continuous(breaks = c(0,200,400,600,800,1000)) + coord_cartesian(ylim = c(0, 1000)) +
+  labs(y= "Cases per year", x = element_blank()) +
+  geom_hline(linetype = 2, yintercept=(uk_final %>% filter(region_group != "Region Not Specified") %>% 
+  group_by(user_year, region_group) %>% summarise(cases = n()*4) %>% ungroup() %>% group_by(region_group) %>% summarise(median = median(cases)) %>% summarise(median = mean(median)) %>% pull()))
+
+ggsave(fig4, filename = "fig4.pdf", device = cairo_pdf,
+       width = 8, height = 5, units = "in")
+fig4 
+
+#if want boxplot with have to factorise region groups and order according to there medians in regional anayalsis
+```
+### Fig 5
+```{r supervision00, fig.cap = "Figure 5 Supervision by grade and time of day. Top panel” supervision levels for core trainees. Bottom panel” supervision levels for specialty trainees.", echo=FALSE, message=FALSE, warning=FALSE}
+
+fig5 <- ggplot(supervised_total, aes(x = timeofdayfixed, y= percent_supervised, fill = supervisorcode)) + 
+geom_bar(stat = "identity") + theme_minimal() +   
+scale_x_discrete(limits=c("Night", "Evening", "Day")) +
+scale_fill_brewer(palette = "Blues", direction = 1) +
+facet_grid(usergrade_recoded~.) + coord_flip() +
+geom_text(aes(y=test, label = round(percent_label), digits = 1)) + 
+theme(axis.title.y = element_blank(),
+legend.position = "bottom",
+strip.switch.pad.grid = unit(-0.5, "cm"),
+strip.placement = "outside", 
+strip.background = element_rect(fill = "0", colour = "1", linetype = 0),
+axis.line.y = element_blank(), 
+panel.grid = element_blank()) + 
+labs(y= "Percent supervised (%)", fill = "Supervisor") + 
+guides(fill = guide_legend(reverse = T)) 
+
+ggsave(fig5, filename = "fig5.pdf", device = cairo_pdf,
+       width = 8, height = 5, units = "in")
+fig5
+```
+
+### Fig 6
+```{r Direct_Consultant_Supervisions, warning = F, fig.cap = "Figure 6 Percentage of cases under direct consultant supervision, stratified by time of day. The left plot highlights core trainee cases. The right plot highlights specialty trainee cases. Numbers directly labelled within bars indicate percentages for each strata."}
+
+fig6 <- ggplot(supervised_total_2, aes(x = timeofdayfixed, y= percent_supervised, fill = dir_cons_supervised)) + 
+  geom_bar(stat = "identity") + theme_minimal() +   
+  scale_x_discrete(limits=c("Day", "Evening", "Night")) + 
+  scale_fill_brewer(palette = "Blues", direction = 1,labels = c("Absent", "Present")) +
+  facet_wrap(usergrade_recoded ~., strip.position = "top")  +
+  geom_text(aes(y=test, label = round(percent_label), digits = 1)) +
+  theme(axis.title.x = element_blank(),
+        legend.position = "bottom", 
+        strip.placement = "outside",
+        strip.switch.pad.grid = unit(0, "cm"),
+        strip.background = element_rect(fill = "0", colour = "1", linetype = 0),
+        axis.line.x = element_blank(), 
+        panel.grid = element_blank()) + 
+  labs(y= "Percent (%)", fill = "Direct Consultant Supervision") + guides(fill = guide_legend(reverse = T))
+fig6
+ggsave(fig6, filename = "fig6.pdf", device = cairo_pdf,
+       width = 8, height = 5, units = "in")
+
+```
+## References
